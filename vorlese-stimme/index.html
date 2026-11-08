@@ -90,6 +90,11 @@ input[type="range"] { width: 100%; accent-color: var(--accent); }
 .note { font-size: 0.82rem; color: var(--muted); margin: 0; }
 .status { font-size: 0.85rem; padding: 10px 12px; border-radius: 8px; background: var(--bg); color: var(--muted); }
 .status.warn { color: var(--fg); border: 1px solid var(--mark); }
+.nosupport { display: grid; gap: 10px; padding: 14px; border-radius: 8px; border: 1px solid var(--accent); background: var(--bg); }
+.nosupport p { margin: 0; }
+.nosupport a.btn { text-align: center; text-decoration: none; }
+.nosupport input { font-family: var(--font-mono); font-size: 0.8rem; width: 100%; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); color: var(--fg); }
+.mixer.unsupported .ctl { display: none; }
 hr { border: 0; border-top: 1px solid var(--line); margin: 0; }
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; scroll-behavior: auto !important; } }
 </style>
@@ -129,7 +134,15 @@ hr { border: 0; border-top: 1px solid var(--line); margin: 0; }
         <button class="btn" id="stop" disabled>■ Stopp</button>
       </div>
       <div class="status" id="status">Bereit.</div>
-      <hr>
+      <div class="nosupport" id="nosupport" hidden>
+        <strong>Hier gibt es keine Stimme.</strong>
+        <p>Die Claude-App kann auf diesem Gerät nicht vorlesen. Öffne die Seite in Chrome, Samsung Internet oder Edge, dort klappt es.</p>
+        <a class="btn primary" id="open-browser" href="https://claude.ai/artifact/3WM6Pr9JdwdWRqRHypiWKZ" target="_blank" rel="noopener">Im Browser öffnen</a>
+        <button class="btn" id="copy-link">Link kopieren</button>
+        <input id="link-field" value="https://claude.ai/artifact/3WM6Pr9JdwdWRqRHypiWKZ" readonly aria-label="Link zur Seite">
+        <p class="note">Falls der Knopf nur wieder die App öffnet: Link kopieren, in Chrome einfügen und dort mit deinem Claude-Konto anmelden. Oder oben rechts über ⋮ „Im Browser öffnen“ wählen.</p>
+      </div>
+      <hr id="controls-start">
       <div class="field">
         <label class="label" for="lang">Sprache</label>
         <select id="lang"></select>
@@ -187,8 +200,22 @@ hr { border: 0; border-top: 1px solid var(--line); margin: 0; }
   const fmt = (n, d = 2) => n.toFixed(d).replace(".", ",");
   const setStatus = (msg, warn = false) => { els.status.textContent = msg; els.status.classList.toggle("warn", warn); };
 
+  function markUnsupported() {
+    $("nosupport").hidden = false;
+    els.status.hidden = true;
+    document.querySelector(".mixer").classList.add("unsupported");
+    let n = $("controls-start");
+    while (n) { if (n.classList) n.classList.add("ctl"); n = n.nextElementSibling; }
+    document.querySelector(".transport").classList.add("ctl");
+  }
+  $("copy-link").onclick = () => {
+    const f = $("link-field");
+    const done = () => { $("copy-link").textContent = "Kopiert"; setTimeout(() => $("copy-link").textContent = "Link kopieren", 2000); };
+    const fallback = () => { f.focus(); f.select(); $("copy-link").textContent = "Markiert – jetzt kopieren"; };
+    try { navigator.clipboard.writeText(f.value).then(done, fallback); } catch { fallback(); }
+  };
   if (!synth || typeof SpeechSynthesisUtterance === "undefined") {
-    setStatus("Dieser Browser unterstützt keine Sprachausgabe. Bitte Chrome, Edge oder Safari verwenden.", true);
+    markUnsupported();
     els.play.disabled = true; $("test").disabled = true;
   }
 
@@ -220,6 +247,7 @@ hr { border: 0; border-top: 1px solid var(--line); margin: 0; }
   function loadVoices() {
     voices = synth ? synth.getVoices() : [];
     if (!voices.length) { setStatus("Stimmen werden geladen …"); return; }
+    if (noVoiceTimer) { clearTimeout(noVoiceTimer); noVoiceTimer = null; }
     const langs = [...new Set(voices.map(v => v.lang.split(/[-_]/)[0].toLowerCase()))]
       .sort((a, b) => (a === "de" ? -1 : b === "de" ? 1 : langName(a).localeCompare(langName(b), "de")));
     const savedLang = store.get("vs-lang");
@@ -243,7 +271,12 @@ hr { border: 0; border-top: 1px solid var(--line); margin: 0; }
   const currentVoice = () => voices.find(v => encodeURIComponent(v.voiceURI) === els.voice.value) || null;
   els.lang.onchange = () => { store.set("vs-lang", els.lang.value); fillVoices(); store.set("vs-voice", els.voice.value); };
   els.voice.onchange = () => store.set("vs-voice", els.voice.value);
-  if (synth) { loadVoices(); synth.addEventListener?.("voiceschanged", loadVoices); setTimeout(loadVoices, 600); }
+  let noVoiceTimer = null;
+  if (synth) {
+    loadVoices(); synth.addEventListener?.("voiceschanged", loadVoices); setTimeout(loadVoices, 600);
+    // Manche Apps haben die Schnittstelle, aber keine einzige Stimme
+    noVoiceTimer = setTimeout(() => { if (!voices.length) markUnsupported(); }, 2500);
+  }
 
   // ---------- Regler ----------
   function syncOutputs() {
